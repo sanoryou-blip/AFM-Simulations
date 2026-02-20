@@ -1,83 +1,104 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-class EnergyBasedAFMSim:
-          def __init__(self, A=1e-19, sigma=0.34e-9):
-                        self.A = A
-                        self.sigma = sigma
+class PhysicalAFMSimulator:
+              def __init__(self, Hamaker=2e-20, sigma=0.34e-9):
+                                # Hamaker constant (liquid approx: 2e-20 J)
+                                self.A = Hamaker
+                                self.sigma = sigma
 
-          def potential_ts(self, h, R):
-                        """Lennard-Jones Potential: Sphere-Flat"""
-                        h = np.maximum(h, 0.1e-9)
-                        # V = - (A*R)/(6*h) + (A*R*sigma^6)/(180*h^7)
-                        return - (self.A * R) / (6 * h) + (self.A * R * self.sigma**6) / (1260 * h**7)
+              def get_force(self, h, R):
+                                """
+                                        Tip-Sample Force (Lennard-Jones)
+                                                Attraction is positive (pulling tip towards sample)
+                                                        Repulsion is negative
+                                                                """
+                                h = np.maximum(h, 0.1e-9)
+                                f_attr = (self.A * R) / (6 * h**2)
+                                f_rep = - (self.A * R * self.sigma**6) / (180 * h**8)
+                                return f_attr + f_rep
 
-          def find_global_equilibrium(self, z, k, R, x_prev):
-                        """
-                                Total Energy E = 0.5 * k * x^2 + V_ts(z - x)
-                                        Find the point x that minimizes this energy, considering continuity.
-                                                """
-                        h_range = np.linspace(0.1e-9, 20e-9, 3000)
-                        x_candidates = z - h_range
+              def solve_step(self, z, k, R, x_prev):
+                                """
+                                        Find equilibrium: k*x = Force(z - x)
+                                                Track the current branch of equilibrium.
+                                                        """
+                                # Search range for deflection x around previous state
+                                # Tip-sample distance h = z - x must be > 0.1nm
+                                x_min = x_prev - 2e-9
+                                x_max = min(x_prev + 2e-9, z - 0.1e-9)
 
-        # Total Energy
-              E_total = 0.5 * k * x_candidates**2 + self.potential_ts(h_range, R)
+        x_search = np.linspace(x_min, x_max, 2000)
+        # Residual: k*x - Force(z-x) = 0
+        residual = k * x_search - self.get_force(z - x_search, R)
 
-        # For stability, find the global minimum.
-        idx_min = np.argmin(E_total)
+        # Look for zero crossings (equilibrium points)
+        crossings = np.where(np.diff(np.sign(residual)))[0]
 
-        return x_candidates[idx_min]
+        if len(crossings) > 0:
+                              # Pick the equilibrium point closest to previous state (continuity)
+                              idx = crossings[np.argmin(np.abs(x_search[crossings] - x_prev))]
+                              return x_search[idx]
+else:
+                      # Branch disappeared -> Jump to the other stable state (global search)
+                      h_full = np.linspace(0.1e-9, 20e-9, 4000)
+                      x_full = z - h_full
+                      res_full = np.abs(k * x_full - self.get_force(h_full, R))
+                      return x_full[np.argmin(res_full)]
 
-    def simulate(self, z_range, k, R_nm):
-                  R = R_nm * 1e-9
+    def run(self, z_start, z_end, k, R_nm, steps=1000):
+                      R = R_nm * 1e-9
+                      z_approach = np.linspace(z_start, z_end, steps)
+                      z_retract = z_approach[::-1]
 
         # Approach
-                  x_app = []
-                  x_curr = 0.0
-                  for z in z_range:
-                                    x_curr = self.find_global_equilibrium(z, k, R, x_curr)
-                                    x_app.append(x_curr)
+                      x_app = []
+                      x_curr = 0.0
+                      for z in z_approach:
+                                            x_curr = self.solve_step(z, k, R, x_curr)
+                                            x_app.append(x_curr)
 
-        # Retract (trace back to show hysteresis)
-                  x_ret = []
-                  x_curr = x_app[-1]
-                  for z in reversed(z_range):
-                                    h_range = np.linspace(0.1e-9, 20e-9, 3000)
-                                    x_cand = z - h_range
-                                    E = 0.5 * k * x_cand**2 + self.potential_ts(h_range, R)
+        # Retract
+                      x_ret = []
+                      x_curr = x_app[-1]
+                      for z in z_retract:
+                                            x_curr = self.solve_step(z, k, R, x_curr)
+                                            x_ret.append(x_curr)
 
-            x_curr = x_cand[np.argmin(E)]
-            x_ret.append(x_curr)
-
-        return np.array(x_app), np.array(x_ret[::-1])
+        return z_approach, np.array(x_app), np.array(x_ret[::-1])
 
 def main():
-          sim = EnergyBasedAFMSim()
-    z_range = np.linspace(12e-9, -1e-9, 800)
+              sim = PhysicalAFMSimulator()
+              # 5nm Scan Range (standard HS-AFM scale)
+              z_start, z_end = 6e-9, -0.5e-9
 
-    plt.figure(figsize=(9, 6))
+    plt.figure(figsize=(8, 6))
 
-    params = [
-                  {'k': 0.2, 'R': 15, 'color': 'red', 'label': 'k=0.2, R=15nm'},
-                  {'k': 0.8, 'R': 15, 'color': 'blue', 'label': 'k=0.8, R=15nm'}
+    # Typical HS-AFM Cantilever (BL-AC10FS etc.)
+    # k = 0.1 N/m, R = 5-10 nm
+    configs = [
+                      {'k': 0.1, 'R': 8, 'color': 'red', 'label': 'Soft Tip (k=0.1, R=8nm)'},
+                      {'k': 0.2, 'R': 8, 'color': 'blue', 'label': 'Stiff Tip (k=0.2, R=8nm)'}
     ]
 
-    for p in params:
-                  x_app, x_ret = sim.simulate(z_range, p['k'], p['R'])
-                  z_nm = z_range * 1e9
-                  plt.plot(z_nm, x_app * 1e9, label=f"{p['label']} (App)", color=p['color'], lw=2)
-                  plt.plot(z_nm, x_ret * 1e9, label=f"{p['label']} (Ret)", color=p['color'], linestyle='--', alpha=0.5)
+    for c in configs:
+                      z, x_app, x_ret = sim.run(z_start, z_end, c['k'], c['R'])
+                      z_nm = z * 1e9
+                      plt.plot(z_nm, x_app * 1e9, label=f"{c['label']} App", color=c['color'], lw=2)
+                      plt.plot(z_nm, x_ret * 1e9, label=f"{c['label']} Ret", color=c['color'], linestyle='--', alpha=0.7)
 
-    plt.title("AFM Force Curve (Energy Minimization Model)")
-    plt.xlabel("Z distance (nm)")
-    plt.ylabel("Deflection (nm)")
+    plt.title("Realistic AFM Force Curve (Liquid/HS-AFM Scale)")
+    plt.xlabel("Support Position z (nm)")
+    plt.ylabel("Deflection x (nm)")
     plt.grid(True, alpha=0.3)
     plt.legend()
+    # Convention: Deflection towards sample is positive, but plots often invert Y
     plt.gca().invert_yaxis()
 
     plt.tight_layout()
-    plt.savefig("afm_final_curve.png")
-    print("Graph generated successfully.")
+    plt.savefig("afm_corrected_final.png")
+    print("Graph generated: afm_corrected_final.png")
 
 if __name__ == "__main__":
-          main()
+              main()
+          
