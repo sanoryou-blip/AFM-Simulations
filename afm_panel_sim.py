@@ -51,7 +51,7 @@ class AFMPanelApp:
         # Scan
         self.z_start_var = tk.StringVar(value="6.0")
         self.z_end_var = tk.StringVar(value="-3.0")
-        self.freq_var = tk.StringVar(value="3000000.0")
+        self.freq_var = tk.StringVar(value="300000.0")
         self.steps_var = tk.StringVar(value="500")
         self.duration_var = tk.StringVar(value="0.00001")
         self.noise_var = tk.StringVar(value="0.1")
@@ -188,11 +188,11 @@ class AFMPanelApp:
         if env == "Air":
             self.visc_var.set("0.01") # Air drag is negligible
             self.duration_var.set("0.00001")
-            self.freq_var.set("3000000.0")
+            self.freq_var.set("300000.0")
         else:
             self.visc_var.set("5.0")
             self.duration_var.set("0.00001")
-            self.freq_var.set("3000000.0")
+            self.freq_var.set("300000.0")
             
         self.on_material_change()
 
@@ -220,7 +220,7 @@ class AFMPanelApp:
         self.r_var.set("10.0")
         self.z_start_var.set("6.0")
         self.z_end_var.set("-3.0")
-        self.freq_var.set("3000000.0")
+        self.freq_var.set("300000.0")
         self.duration_var.set("0.00001")
         self.z_mode.set("Sine")
         self.status_var.set("Ready")
