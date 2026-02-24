@@ -58,6 +58,8 @@ class AFMPanelApp:
         
         self.status_var = tk.StringVar(value="Ready")
         self.use_lj_rep_var = tk.BooleanVar(value=False)
+        self.rand_e_var = tk.BooleanVar(value=False)
+        self.e_var_pct_var = tk.StringVar(value="20.0")
         
         # --- UI Setup ---
         self.setup_ui()
@@ -132,6 +134,13 @@ class AFMPanelApp:
         add_entry(self.ctrl_frame, "8. Hamaker Constant A [zJ]:", self.a_calc_var)
         
         ttk.Checkbutton(self.ctrl_frame, text="Use L-J (h^-8) Repulsion", variable=self.use_lj_rep_var).pack(anchor=tk.W, pady=5)
+        
+        # --- Random Elasticity ---
+        rand_e_frame = ttk.Frame(self.ctrl_frame)
+        rand_e_frame.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(rand_e_frame, text="Randomize E per Cycle", variable=self.rand_e_var).pack(side=tk.LEFT)
+        ttk.Entry(rand_e_frame, textvariable=self.e_var_pct_var, width=5, justify=tk.RIGHT).pack(side=tk.RIGHT)
+        ttk.Label(rand_e_frame, text="Var[%]:").pack(side=tk.RIGHT)
         
         ttk.Separator(self.ctrl_frame, orient='horizontal').pack(fill=tk.X, pady=10)
         
@@ -243,16 +252,17 @@ class AFMPanelApp:
         
         return f_lj + f_hertz
 
-    def solve_trajectory(self, z_total, v_total, k, R, Ah, Bh, E_s, nu, gamma, sigma, h_min):
+    def solve_trajectory(self, z_total, v_total, k, R, Ah, Bh, E_s_array, nu, gamma, sigma, h_min):
         d_vals = []
         d_prev = 0.0
         
-        for Z_val, V_val in zip(z_total, v_total):
+        for i, (Z_val, V_val) in enumerate(zip(z_total, v_total)):
             d_cand = np.linspace(-20e-9, 45e-9, 1500)
             h_cand = Z_val + d_cand
             f_drag = -gamma * V_val
             
-            forces = np.array([self.get_force(h, R, Ah, Bh, E_s, nu, sigma, h_min) for h in h_cand])
+            E_s_curr = E_s_array[i]
+            forces = np.array([self.get_force(h, R, Ah, Bh, E_s_curr, nu, sigma, h_min) for h in h_cand])
             res = k * d_cand - (forces + f_drag)
             
             crossings = np.where(np.diff(np.sign(res)))[0]
@@ -370,7 +380,22 @@ class AFMPanelApp:
             # Velocity for drag (v = dz/dt)
             v_z = np.gradient(z_t, dt)
             
-            d_t = self.solve_trajectory(z_t + sig, v_z, k, R, Ah, Bh, E_s, nu, gamma, sig, h_min)
+            # Setup E_s array (Randomization if enabled)
+            E_base = float(self.e_var.get()) * 1e9
+            if self.rand_e_var.get():
+                var_pct = float(self.e_var_pct_var.get()) / 100.0
+                pts_total = len(t)
+                E_s_array = np.zeros(pts_total)
+                num_cycles = int(np.ceil(total_duration * freq))
+                for c in range(num_cycles):
+                    start_idx = int(c * pts_per_cycle)
+                    end_idx = int((c + 1) * pts_per_cycle)
+                    factor = 1.0 + (np.random.random() * 2 - 1) * var_pct # Random +/- Variation
+                    E_s_array[start_idx:min(end_idx, pts_total)] = E_base * factor
+            else:
+                E_s_array = np.full_like(t, E_base)
+            
+            d_t = self.solve_trajectory(z_t + sig, v_z, k, R, Ah, Bh, E_s_array, nu, gamma, sig, h_min)
             
             if noise_nm > 0:
                 d_t += np.random.normal(0, noise_nm * 1e-9, d_t.size)
