@@ -57,6 +57,7 @@ class AFMPanelApp:
         self.noise_var = tk.StringVar(value="0.1")
         
         self.status_var = tk.StringVar(value="Ready")
+        self.use_lj_rep_var = tk.BooleanVar(value=False)
         
         # --- UI Setup ---
         self.setup_ui()
@@ -129,6 +130,8 @@ class AFMPanelApp:
         add_entry(self.ctrl_frame, "6. Rho Sample [1/m^3]:", self.rho_s_var)
         add_entry(self.ctrl_frame, "7. Hard Cutoff h_min [nm]:", self.h_min_var)
         add_entry(self.ctrl_frame, "8. Hamaker Constant A [zJ]:", self.a_calc_var)
+        
+        ttk.Checkbutton(self.ctrl_frame, text="Use L-J (h^-8) Repulsion", variable=self.use_lj_rep_var).pack(anchor=tk.W, pady=5)
         
         ttk.Separator(self.ctrl_frame, orient='horizontal').pack(fill=tk.X, pady=10)
         
@@ -227,10 +230,9 @@ class AFMPanelApp:
 
     def get_force(self, h, R, Ah, Bh, E_s, nu, sigma, h_min):
         h_eff = np.maximum(h, h_min) 
-        # 1. LJ Force (Attraction only in this macroscopic limit)
-        # We use the h^-2 term for van der Waals attraction.
-        # Repulsion is handled by the Hertzian term to reflect material elasticity.
-        f_lj = - (Ah * R) / (6 * h_eff**2)
+        # 1. LJ Force
+        # f_lj = - (Ah * R) / (6 * h_eff**2) + (Bh * R) / (180 * h_eff**8)
+        f_lj = - (Ah * R) / (6 * h_eff**2) + (Bh * R) / (180 * h_eff**8)
         
         # 2. Hertzian Repulsion (Positive)
         f_hertz = 0.0
@@ -339,12 +341,16 @@ class AFMPanelApp:
             rs = float(self.rho_s_var.get())
             h_min = float(self.h_min_var.get()) * 1e-9
             
-            # Calculate A_h (Macroscopic Hamaker approximation)
-            # A = pi^2 * rho_t * rho_s * 4 * eps * sigma^6
-            c6 = 4.0 * eps * sig**6
+            # Calculate A_h and B_h
             pref = np.pi**2 * rt * rs
+            c6 = 4.0 * eps * sig**6
             Ah = pref * c6
-            Bh = 0.0 # Repulsion handled by Hertz
+            
+            if self.use_lj_rep_var.get():
+                c12 = 4.0 * eps * sig**12
+                Bh = pref * c12
+            else:
+                Bh = 0.0
             
             z_s = (z_s_nm - sig*1e9) * 1e-9
             z_e = (z_e_nm - sig*1e9) * 1e-9
