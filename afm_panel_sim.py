@@ -11,48 +11,56 @@ import os
 class AFMPanelApp:
     def __init__(self, root):
         self.root = root
-        # --- Liquid Material Presets (E [GPa], Eps [zJ], Sigma [nm], Rho_t, Rho_s) ---
-        # Adapted from A ~ pi^2 * rho^2 * 4 * eps * sigma^6
+        # --- Material Presets (E, Eps, Sig, Rho_t, Rho_s, h_min) ---
         self.materials = {
-            "Mica (in Water)": (60.0, 3.95, 0.34, 1e28, 1e28),    
-            "Silicon (in Water)": (160.0, 5.92, 0.34, 1e28, 1e28),
-            "Cell (Soft)": (0.0001, 0.79, 0.34, 1e28, 1e28),   
-            "Lipid Bilayer": (0.02, 1.97, 0.34, 1e28, 1e28)    
+            "Liquid": {
+                "Mica (Water)": (60.0, 3.95, 0.34, 1e28, 1e28, 0.15),    
+                "Gold (Water)": (70.0, 8.0, 0.34, 1e28, 1e28, 0.15),
+                "Lipid Bilayer": (0.02, 1.97, 0.34, 1e28, 1e28, 0.15),
+                "Cell (Soft)": (0.0001, 0.79, 0.34, 1e28, 1e28, 0.15)
+            },
+            "Air": {
+                "Mica (Air)": (60.0, 40.0, 0.34, 1e28, 1e28, 0.18),
+                "Silicon (Air)": (160.0, 50.0, 0.34, 1e28, 1e28, 0.18),
+                "Gold (Air)": (70.0, 100.0, 0.34, 1e28, 1e28, 0.18),
+                "Graphite": (20.0, 35.0, 0.34, 1e28, 1e28, 0.18)
+            }
         }
         
-        # --- Data Storage ---
-        self.last_results = None 
-        
         # --- UI Variables ---
+        self.env_var = tk.StringVar(value="Liquid")
         self.view_mode = tk.StringVar(value="ForceCurve")
         self.z_mode = tk.StringVar(value="Sine")
-        self.mat_choice = tk.StringVar(value="Mica (in Water)")
+        self.mat_choice = tk.StringVar()
         
         # Cantilever
         self.k_var = tk.StringVar(value="1.0")
         self.r_var = tk.StringVar(value="10.0")
         self.visc_var = tk.StringVar(value="5.0")
         
-        # Microscopic / Material
-        self.e_var = tk.StringVar(value="60.0")
-        self.eps_var = tk.StringVar(value="3.95")
-        self.sig_var = tk.StringVar(value="0.34")
-        self.rho_t_var = tk.StringVar(value="1e28")
-        self.rho_s_var = tk.StringVar(value="1e28")
+        # Material Interaction (8 Windows)
+        self.e_var = tk.StringVar(value="60.0")       # 1
+        self.nu_var = tk.StringVar(value="0.3")       # 2
+        self.eps_var = tk.StringVar(value="3.95")     # 3
+        self.sig_var = tk.StringVar(value="0.34")     # 4
+        self.rho_t_var = tk.StringVar(value="1e28")   # 5
+        self.rho_s_var = tk.StringVar(value="1e28")   # 6
+        self.h_min_var = tk.StringVar(value="0.15")   # 7
+        self.a_calc_var = tk.StringVar(value="10.0")  # 8 (Hamaker A)
         
         # Scan
         self.z_start_var = tk.StringVar(value="6.0")
         self.z_end_var = tk.StringVar(value="-3.0")
-        self.freq_var = tk.StringVar(value="3.0")
+        self.freq_var = tk.StringVar(value="3000000.0")
         self.steps_var = tk.StringVar(value="500")
-        self.duration_var = tk.StringVar(value="0.1")
+        self.duration_var = tk.StringVar(value="0.00001")
         self.noise_var = tk.StringVar(value="0.1")
         
-        self.status_var = tk.StringVar(value="Ready (Liquid Mode)")
+        self.status_var = tk.StringVar(value="Ready")
         
         # --- UI Setup ---
         self.setup_ui()
-        self.on_material_change() # Sync presets
+        self.on_env_change() # Init environment and materials
 
     def setup_ui(self):
         # Main Layout
@@ -98,20 +106,29 @@ class AFMPanelApp:
         
         ttk.Separator(self.ctrl_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
-        # --- Section: Material ---
-        ttk.Label(self.ctrl_frame, text="Sample Preset (Liquid):", font=("Helvetica", 10, "bold")).pack(anchor=tk.W)
-        self.mat_combo = ttk.Combobox(self.ctrl_frame, textvariable=self.mat_choice, values=list(self.materials.keys()), state="readonly")
+        # --- Section: Environment ---
+        ttk.Label(self.ctrl_frame, text="Environment:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W)
+        env_frame = ttk.Frame(self.ctrl_frame)
+        env_frame.pack(fill=tk.X, pady=2)
+        ttk.Radiobutton(env_frame, text="Liquid", variable=self.env_var, value="Liquid", command=self.on_env_change).pack(side=tk.LEFT, padx=10)
+        ttk.Radiobutton(env_frame, text="Air", variable=self.env_var, value="Air", command=self.on_env_change).pack(side=tk.LEFT)
+        
+        ttk.Separator(self.ctrl_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+
+        # --- Section: Material & Interaction (8 Windows) ---
+        ttk.Label(self.ctrl_frame, text="Material & Interaction (8 Params):", font=("Helvetica", 10, "bold")).pack(anchor=tk.W)
+        self.mat_combo = ttk.Combobox(self.ctrl_frame, textvariable=self.mat_choice, state="readonly")
         self.mat_combo.pack(fill=tk.X, pady=5)
         self.mat_combo.bind("<<ComboboxSelected>>", self.on_material_change)
         
-        add_entry(self.ctrl_frame, "Young's Modulus [GPa]:", self.e_var)
-        
-        # Microscopic LJ Parameters
-        ttk.Label(self.ctrl_frame, text="Microscopic Interactions:", font=("Helvetica", 9, "italic")).pack(anchor=tk.W, pady=(5,0))
-        add_entry(self.ctrl_frame, "L-J Epsilon [zJ]:", self.eps_var)
-        add_entry(self.ctrl_frame, "L-J Sigma [nm]:", self.sig_var)
-        add_entry(self.ctrl_frame, "Rho Tip [1/m^3]:", self.rho_t_var)
-        add_entry(self.ctrl_frame, "Rho Sample [1/m^3]:", self.rho_s_var)
+        add_entry(self.ctrl_frame, "1. Young's Modulus [GPa]:", self.e_var)
+        add_entry(self.ctrl_frame, "2. Poisson's Ratio:", self.nu_var)
+        add_entry(self.ctrl_frame, "3. L-J Epsilon [zJ]:", self.eps_var)
+        add_entry(self.ctrl_frame, "4. L-J Sigma [nm]:", self.sig_var)
+        add_entry(self.ctrl_frame, "5. Rho Tip [1/m^3]:", self.rho_t_var)
+        add_entry(self.ctrl_frame, "6. Rho Sample [1/m^3]:", self.rho_s_var)
+        add_entry(self.ctrl_frame, "7. Hard Cutoff h_min [nm]:", self.h_min_var)
+        add_entry(self.ctrl_frame, "8. Hamaker Constant A [zJ]:", self.a_calc_var)
         
         ttk.Separator(self.ctrl_frame, orient='horizontal').pack(fill=tk.X, pady=10)
         
@@ -161,69 +178,83 @@ class AFMPanelApp:
         self.toolbar.update()
         self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
+    def on_env_change(self, event=None):
+        env = self.env_var.get()
+        valid_mats = list(self.materials[env].keys())
+        self.mat_combo.config(values=valid_mats)
+        self.mat_choice.set(valid_mats[0])
+        
+        # Set environment-specific defaults
+        if env == "Air":
+            self.visc_var.set("0.01") # Air drag is negligible
+            self.duration_var.set("0.00001")
+            self.freq_var.set("3000000.0")
+        else:
+            self.visc_var.set("5.0")
+            self.duration_var.set("0.00001")
+            self.freq_var.set("3000000.0")
+            
+        self.on_material_change()
+
     def on_material_change(self, event=None):
+        env = self.env_var.get()
         mat_name = self.mat_choice.get()
-        if mat_name in self.materials:
-            E, eps, sig, rt, rs = self.materials[mat_name]
+        if mat_name in self.materials[env]:
+            E, eps, sig, rt, rs, hmin = self.materials[env][mat_name]
             self.e_var.set(str(E))
             self.eps_var.set(str(eps))
             self.sig_var.set(str(sig))
             self.rho_t_var.set(str(rt))
             self.rho_s_var.set(str(rs))
+            self.h_min_var.set(str(hmin))
+            self.nu_var.set("0.3")
+            
+            # Auto-calculate A for display
+            A = (np.pi**2 * float(rt) * float(rs) * 4.0 * float(eps)*1e-21 * (float(sig)*1e-9)**6) * 1e21
+            self.a_calc_var.set(f"{A:.2f}")
 
     def reset_params(self):
+        self.env_var.set("Liquid")
+        self.on_env_change()
         self.k_var.set("1.0")
         self.r_var.set("10.0")
-        self.visc_var.set("5.0")
-        self.mat_choice.set("Mica (in Water)")
-        self.on_material_change()
         self.z_start_var.set("6.0")
         self.z_end_var.set("-3.0")
-        self.freq_var.set("3.0")
-        self.duration_var.set("0.1")
-        self.noise_var.set("0.1")
+        self.freq_var.set("3000000.0")
+        self.duration_var.set("0.00001")
         self.z_mode.set("Sine")
         self.status_var.set("Ready")
 
-    def get_force(self, h, R, Ah, Bh, E_s, sigma):
-        """
-        Calculates Tip-Sample Force (L-J + Hertz):
-        Ah: Attraction coefficient
-        Bh: Repulsion coefficient
-        sigma: distance where repulsion starts
-        """
-        h_eff = np.maximum(h, 0.15e-9) # Minimum cutoff
+    def get_force(self, h, R, Ah, Bh, E_s, nu, sigma, h_min):
+        h_eff = np.maximum(h, h_min) 
         
-        # 1. LJ Force: -Ah*R/(6*h^2) + Bh*R/(180*h^8)
+        # 1. LJ Force
         f_lj = - (Ah * R) / (6 * h_eff**2) + (Bh * R) / (180 * h_eff**8)
         
         # 2. Hertzian Repulsion (Positive)
         f_hertz = 0.0
         if h < sigma:
             indent = sigma - h
-            E_star = E_s / (1 - 0.3**2) # using nu_s = 0.3
+            E_star = E_s / (1 - nu**2)
             f_hertz = (4/3) * E_star * np.sqrt(R) * (indent**1.5)
         
         return f_lj + f_hertz
 
-    def solve_trajectory(self, z_total, v_total, k, R, Ah, Bh, E_s, gamma, sigma):
+    def solve_trajectory(self, z_total, v_total, k, R, Ah, Bh, E_s, nu, gamma, sigma, h_min):
         d_vals = []
         d_prev = 0.0
         
         for Z_val, V_val in zip(z_total, v_total):
-            d_cand = np.linspace(-10e-9, 40e-9, 1200)
+            d_cand = np.linspace(-20e-9, 45e-9, 1500)
             h_cand = Z_val + d_cand
-            
-            # Drag force acts on the cantilever: F_drag = -gamma * (V_support + V_deflection)
-            # Since V_deflection is small relative to piezo in HS-AFM, we approximate with V_support
             f_drag = -gamma * V_val
             
-            # Balance: k*d = F_ts(Z+d) + F_drag
-            forces = np.array([self.get_force(h, R, Ah, Bh, E_s, sigma) for h in h_cand])
+            forces = np.array([self.get_force(h, R, Ah, Bh, E_s, nu, sigma, h_min) for h in h_cand])
             res = k * d_cand - (forces + f_drag)
             
             crossings = np.where(np.diff(np.sign(res)))[0]
             if len(crossings) > 0:
+                # Find stable root (k - dF/dh > 0) closest to previous
                 idx = crossings[np.argmin(np.abs(d_cand[crossings] - d_prev))]
                 d_curr = d_cand[idx]
             else:
@@ -300,12 +331,14 @@ class AFMPanelApp:
             z_mode = self.z_mode.get()
             
             E_s = float(self.e_var.get()) * 1e9
+            nu = float(self.nu_var.get())
             eps = float(self.eps_var.get()) * 1e-21
             sig = float(self.sig_var.get()) * 1e-9
             rt = float(self.rho_t_var.get())
             rs = float(self.rho_s_var.get())
+            h_min = float(self.h_min_var.get()) * 1e-9
             
-            # Calculate A_h and B_h like Prof. Uchihashi
+            # Calculate A_h and B_h
             c6 = 4.0 * eps * sig**6
             c12 = 4.0 * eps * sig**12
             pref = np.pi**2 * rt * rs
@@ -330,7 +363,7 @@ class AFMPanelApp:
             # Velocity for drag (v = dz/dt)
             v_z = np.gradient(z_t, dt)
             
-            d_t = self.solve_trajectory(z_t + sig, v_z, k, R, Ah, Bh, E_s, gamma, sig)
+            d_t = self.solve_trajectory(z_t + sig, v_z, k, R, Ah, Bh, E_s, nu, gamma, sig, h_min)
             
             if noise_nm > 0:
                 d_t += np.random.normal(0, noise_nm * 1e-9, d_t.size)
