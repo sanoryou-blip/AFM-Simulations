@@ -9,8 +9,21 @@ import os
 class AFMAnalyzerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("AFM Experimental Data Analyzer")
+        self.root.title("AFM Data Analyzer PRO")
         
+        # --- Taskbar Separation (Windows) ---
+        try:
+            import ctypes
+            myappid = 'sanoryou.afmsim.analyzer.v1'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            
+            icon_path = os.path.join(os.path.dirname(__file__), "analyzer_icon.png")
+            if os.path.exists(icon_path):
+                self.icon_img = tk.PhotoImage(file=icon_path)
+                self.root.iconphoto(False, self.icon_img)
+        except Exception:
+            pass
+
         # --- Data Storage ---
         self.raw_data = None  # Original loaded columns
         self.processed_data = None
@@ -26,6 +39,11 @@ class AFMAnalyzerApp:
         self.col_def = tk.IntVar(value=2)
         
         self.status_var = tk.StringVar(value="Please load an experimental CSV/TXT file.")
+        
+        # New: Oscilloscope/Manual controls
+        self.skip_lines_var = tk.StringVar(value="0")
+        self.inv_piezo_var = tk.BooleanVar(value=False)
+        self.inv_def_var = tk.BooleanVar(value=False)
         
         self.setup_ui()
 
@@ -58,6 +76,12 @@ class AFMAnalyzerApp:
         add_col_entry(col_frame, "Time Col:", self.col_time)
         add_col_entry(col_frame, "Piezo (V) Col:", self.col_piezo)
         add_col_entry(col_frame, "Deflection (V) Col:", self.col_def)
+        
+        ttk.Label(col_frame, text="Skip Meta Lines:").pack(anchor=tk.W, pady=(5,0))
+        ttk.Entry(col_frame, textvariable=self.skip_lines_var, width=5).pack(anchor=tk.W)
+        
+        ttk.Checkbutton(col_frame, text="Invert Piezo Signal", variable=self.inv_piezo_var).pack(anchor=tk.W, pady=2)
+        ttk.Checkbutton(col_frame, text="Invert Deflection Signal", variable=self.inv_def_var).pack(anchor=tk.W, pady=2)
 
         # 3. Calibration Parameters
         cal_frame = ttk.LabelFrame(self.sidebar, text="3. Calibration Specs", padding="10")
@@ -99,22 +123,33 @@ class AFMAnalyzerApp:
         self.file_label.config(text=os.path.basename(path))
         
         try:
-            # Simple delimiter check
+            skip = int(self.skip_lines_var.get())
+            
+            # Robust reading for Oscilloscope CSVs
+            # First, check delimiter
             with open(path, 'r') as f:
-                first_line = f.readline()
-                dialect = csv.Sniffer().sniff(first_line)
-                delimiter = dialect.delimiter
+                for _ in range(skip): f.readline()
+                first_data_line = f.readline()
+                if ',' in first_data_line: delimiter = ','
+                elif '\t' in first_data_line: delimiter = '\t'
+                else: delimiter = None # Space or fixed width
+
+            # Use genfromtxt with manual skip
+            data = np.genfromtxt(path, delimiter=delimiter, skip_header=skip)
             
-            data = np.genfromtxt(path, delimiter=delimiter, skip_header=1) # Assume 1 header line
-            if np.isnan(data).any(): # Retry with no header if fail
-                data = np.genfromtxt(path, delimiter=delimiter)
+            # If multiple headers exist (like in some Osc formats), genfromtxt might return nans
+            # We try to filter rows that are strictly numeric
+            mask = ~np.isnan(data).any(axis=1)
+            self.raw_data = data[mask]
             
-            self.raw_data = data
-            self.status_var.set("File loaded. Checking columns...")
+            if self.raw_data.size == 0:
+                raise ValueError("No numeric data found. Check 'Skip Meta Lines'.")
+
+            self.status_var.set(f"Loaded {self.raw_data.shape[0]} rows.")
             self.process_data()
             
         except Exception as e:
-            self.status_var.set(f"Error loading: {e}")
+            self.status_var.set(f"Load Error: {e}")
 
     def process_data(self):
         if self.raw_data is None: return
@@ -127,6 +162,10 @@ class AFMAnalyzerApp:
             t = self.raw_data[:, c_t]
             p_v = self.raw_data[:, c_p]
             d_v = self.raw_data[:, c_d]
+            
+            # Apply Inversions
+            if self.inv_piezo_var.get(): p_v = -p_v
+            if self.inv_def_var.get(): d_v = -d_v
             
             d_sens = float(self.def_sens_var.get())
             p_sens = float(self.piezo_sens_var.get())
