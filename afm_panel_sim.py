@@ -45,6 +45,7 @@ class AFMPanelApp:
         self.z_end_var = tk.StringVar(value="-3.0")
         self.freq_var = tk.StringVar(value="3.0")
         self.steps_var = tk.StringVar(value="500")
+        self.duration_var = tk.StringVar(value="0.1")
         self.noise_var = tk.StringVar(value="0.1")
         
         self.status_var = tk.StringVar(value="Ready (Liquid Mode)")
@@ -119,6 +120,7 @@ class AFMPanelApp:
         add_entry(self.ctrl_frame, "Scan End [nm]:", self.z_end_var)
         add_entry(self.ctrl_frame, "Frequency [Hz]:", self.freq_var)
         add_entry(self.ctrl_frame, "Pts per Cycle:", self.steps_var)
+        add_entry(self.ctrl_frame, "Duration [s]:", self.duration_var)
         add_entry(self.ctrl_frame, "Noise Level [nm]:", self.noise_var)
 
         # --- Z Ramp Mode ---
@@ -178,6 +180,7 @@ class AFMPanelApp:
         self.z_start_var.set("6.0")
         self.z_end_var.set("-3.0")
         self.freq_var.set("3.0")
+        self.duration_var.set("0.1")
         self.noise_var.set("0.1")
         self.z_mode.set("Sine")
         self.status_var.set("Ready")
@@ -312,7 +315,7 @@ class AFMPanelApp:
             z_s = (z_s_nm - sig*1e9) * 1e-9
             z_e = (z_e_nm - sig*1e9) * 1e-9
             
-            total_duration = 1.0
+            total_duration = float(self.duration_var.get())
             total_points = int(pts_per_cycle * freq * total_duration)
             t = np.linspace(0, total_duration, total_points)
             dt = t[1] - t[0]
