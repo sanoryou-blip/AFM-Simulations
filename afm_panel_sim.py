@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import tkinter as tk
 from tkinter import ttk
 import threading
@@ -11,30 +11,47 @@ import os
 class AFMPanelApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("HS-AFM Physics Simulator - Liquid Mode")
-        
-        # --- Physical Constants ---
-        self.sigma = 0.34e-9 
-        self.nu_s = 0.3      
-        
-        # --- Liquid Material Presets (E [GPa], A [zJ]) ---
-        # Hamaker constants (A) are reduced for liquid environment (~1/10 of air)
+        # --- Liquid Material Presets (E [GPa], Eps [zJ], Sigma [nm], Rho_t, Rho_s) ---
+        # Adapted from A ~ pi^2 * rho^2 * 4 * eps * sigma^6
         self.materials = {
-            "Mica (in Water)": (60.0, 10.0),    
-            "Silicon (in Water)": (160.0, 15.0),
-            "Cell (Soft)": (0.0001, 2.0),   
-            "Lipid Bilayer": (0.02, 5.0)    
+            "Mica (in Water)": (60.0, 3.95, 0.34, 1e28, 1e28),    
+            "Silicon (in Water)": (160.0, 5.92, 0.34, 1e28, 1e28),
+            "Cell (Soft)": (0.0001, 0.79, 0.34, 1e28, 1e28),   
+            "Lipid Bilayer": (0.02, 1.97, 0.34, 1e28, 1e28)    
         }
         
         # --- Data Storage ---
         self.last_results = None 
+        
+        # --- UI Variables ---
         self.view_mode = tk.StringVar(value="ForceCurve")
         self.z_mode = tk.StringVar(value="Sine")
+        self.mat_choice = tk.StringVar(value="Mica (in Water)")
+        
+        # Cantilever
+        self.k_var = tk.StringVar(value="1.0")
+        self.r_var = tk.StringVar(value="10.0")
+        self.visc_var = tk.StringVar(value="5.0")
+        
+        # Microscopic / Material
+        self.e_var = tk.StringVar(value="60.0")
+        self.eps_var = tk.StringVar(value="3.95")
+        self.sig_var = tk.StringVar(value="0.34")
+        self.rho_t_var = tk.StringVar(value="1e28")
+        self.rho_s_var = tk.StringVar(value="1e28")
+        
+        # Scan
+        self.z_start_var = tk.StringVar(value="6.0")
+        self.z_end_var = tk.StringVar(value="-3.0")
+        self.freq_var = tk.StringVar(value="3.0")
+        self.steps_var = tk.StringVar(value="500")
+        self.noise_var = tk.StringVar(value="0.1")
+        
+        self.status_var = tk.StringVar(value="Ready (Liquid Mode)")
         
         # --- UI Setup ---
         self.setup_ui()
-        self.on_material_change() # Init entries
-        self.status_var.set("Ready (Liquid Mode)")
+        self.on_material_change() # Sync presets
 
     def setup_ui(self):
         # Main Layout
@@ -65,40 +82,44 @@ class AFMPanelApp:
         self.ctrl_frame = ttk.LabelFrame(self.scrollable_frame, text="Liquid AFM Parameters", padding="15")
         self.ctrl_frame.pack(fill=tk.BOTH, expand=True)
         
-        def add_entry(parent, label_text, default_val):
+        def add_entry(parent, label_text, var):
             frame = ttk.Frame(parent)
             frame.pack(fill=tk.X, pady=4)
             ttk.Label(frame, text=label_text).pack(side=tk.LEFT)
-            var = tk.StringVar(value=str(default_val))
             entry = ttk.Entry(frame, textvariable=var, width=10, justify=tk.RIGHT)
             entry.pack(side=tk.RIGHT)
-            return var
+            return entry
 
         # --- Section: Cantilever ---
-        self.k_var = add_entry(self.ctrl_frame, "Spring Const k [N/m]:", 1.0)
-        self.r_var = add_entry(self.ctrl_frame, "Tip Radius R [nm]:", 10.0)
-        self.visc_var = add_entry(self.ctrl_frame, "Viscosity Cnt [nN·s/m]:", 5.0)
+        add_entry(self.ctrl_frame, "Spring Const k [N/m]:", self.k_var)
+        add_entry(self.ctrl_frame, "Tip Radius R [nm]:", self.r_var)
+        add_entry(self.ctrl_frame, "Viscosity Cnt [nN·s/m]:", self.visc_var)
         
         ttk.Separator(self.ctrl_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
         # --- Section: Material ---
         ttk.Label(self.ctrl_frame, text="Sample Preset (Liquid):", font=("Helvetica", 10, "bold")).pack(anchor=tk.W)
-        self.mat_choice = tk.StringVar(value="Mica (in Water)")
         self.mat_combo = ttk.Combobox(self.ctrl_frame, textvariable=self.mat_choice, values=list(self.materials.keys()), state="readonly")
         self.mat_combo.pack(fill=tk.X, pady=5)
         self.mat_combo.bind("<<ComboboxSelected>>", self.on_material_change)
         
-        self.e_var = add_entry(self.ctrl_frame, "Young's Modulus [GPa]:", 60.0)
-        self.a_var = add_entry(self.ctrl_frame, "Hamaker Const [zJ]:", 10.0)
+        add_entry(self.ctrl_frame, "Young's Modulus [GPa]:", self.e_var)
+        
+        # Microscopic LJ Parameters
+        ttk.Label(self.ctrl_frame, text="Microscopic Interactions:", font=("Helvetica", 9, "italic")).pack(anchor=tk.W, pady=(5,0))
+        add_entry(self.ctrl_frame, "L-J Epsilon [zJ]:", self.eps_var)
+        add_entry(self.ctrl_frame, "L-J Sigma [nm]:", self.sig_var)
+        add_entry(self.ctrl_frame, "Rho Tip [1/m^3]:", self.rho_t_var)
+        add_entry(self.ctrl_frame, "Rho Sample [1/m^3]:", self.rho_s_var)
         
         ttk.Separator(self.ctrl_frame, orient='horizontal').pack(fill=tk.X, pady=10)
         
         # --- Section: Scan ---
-        self.z_start_var = add_entry(self.ctrl_frame, "Scan Start [nm]:", 6.0)
-        self.z_end_var = add_entry(self.ctrl_frame, "Scan End [nm]:", -3.0)
-        self.freq_var = add_entry(self.ctrl_frame, "Frequency [Hz]:", 3.0)
-        self.steps_var = add_entry(self.ctrl_frame, "Pts per Cycle:", 500)
-        self.noise_var = add_entry(self.ctrl_frame, "Noise Level [nm]:", 0.1)
+        add_entry(self.ctrl_frame, "Scan Start [nm]:", self.z_start_var)
+        add_entry(self.ctrl_frame, "Scan End [nm]:", self.z_end_var)
+        add_entry(self.ctrl_frame, "Frequency [Hz]:", self.freq_var)
+        add_entry(self.ctrl_frame, "Pts per Cycle:", self.steps_var)
+        add_entry(self.ctrl_frame, "Noise Level [nm]:", self.noise_var)
 
         # --- Z Ramp Mode ---
         ttk.Label(self.ctrl_frame, text="Z Ramp Mode:", font=("Helvetica", 10, "bold")).pack(anchor=tk.W, pady=(10,0))
@@ -111,7 +132,6 @@ class AFMPanelApp:
         ttk.Radiobutton(self.ctrl_frame, text="Time Trajectory", variable=self.view_mode, value="Trajectory", command=self.refresh_plot).pack(anchor=tk.W)
 
         # Status
-        self.status_var = tk.StringVar()
         self.status_label = ttk.Label(self.ctrl_frame, textvariable=self.status_var, foreground="blue", font=("Helvetica", 10, "bold"))
         self.status_label.pack(pady=10)
 
@@ -122,6 +142,9 @@ class AFMPanelApp:
         self.save_button = ttk.Button(self.ctrl_frame, text="SAVE DATA TO CSV", command=self.save_to_csv, state=tk.DISABLED)
         self.save_button.pack(fill=tk.X, pady=5)
         
+        self.save_png_button = ttk.Button(self.ctrl_frame, text="SAVE PLOT AS PNG", command=self.save_plot_png)
+        self.save_png_button.pack(fill=tk.X, pady=5)
+        
         ttk.Button(self.ctrl_frame, text="Reset to Default", command=self.reset_params).pack(fill=tk.X, pady=5)
 
         # --- Right Side: Plot (Responsive) ---
@@ -130,13 +153,21 @@ class AFMPanelApp:
         self.fig, self.ax = plt.subplots(figsize=(5, 5), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Add Navigation Toolbar
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.plot_frame)
+        self.toolbar.update()
+        self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
     def on_material_change(self, event=None):
         mat_name = self.mat_choice.get()
         if mat_name in self.materials:
-            E_gpa, A_zj = self.materials[mat_name]
-            self.e_var.set(str(E_gpa))
-            self.a_var.set(str(A_zj))
+            E, eps, sig, rt, rs = self.materials[mat_name]
+            self.e_var.set(str(E))
+            self.eps_var.set(str(eps))
+            self.sig_var.set(str(sig))
+            self.rho_t_var.set(str(rt))
+            self.rho_s_var.set(str(rs))
 
     def reset_params(self):
         self.k_var.set("1.0")
@@ -151,33 +182,42 @@ class AFMPanelApp:
         self.z_mode.set("Sine")
         self.status_var.set("Ready")
 
-    def get_force(self, h, R, A, E_s):
-        h_eff = np.maximum(h, 0.1e-9) 
-        f_vdw = - (A * R) / (6 * h_eff**2)
-        f_rep = 0.0
-        if h < self.sigma:
-            indent = self.sigma - h
-            E_star = E_s / (1 - self.nu_s**2)
-            f_rep = (4/3) * E_star * np.sqrt(R) * (indent**1.5)
-        return f_vdw + f_rep
+    def get_force(self, h, R, Ah, Bh, E_s, sigma):
+        """
+        Calculates Tip-Sample Force (L-J + Hertz):
+        Ah: Attraction coefficient
+        Bh: Repulsion coefficient
+        sigma: distance where repulsion starts
+        """
+        h_eff = np.maximum(h, 0.15e-9) # Minimum cutoff
+        
+        # 1. LJ Force: -Ah*R/(6*h^2) + Bh*R/(180*h^8)
+        f_lj = - (Ah * R) / (6 * h_eff**2) + (Bh * R) / (180 * h_eff**8)
+        
+        # 2. Hertzian Repulsion (Positive)
+        f_hertz = 0.0
+        if h < sigma:
+            indent = sigma - h
+            E_star = E_s / (1 - 0.3**2) # using nu_s = 0.3
+            f_hertz = (4/3) * E_star * np.sqrt(R) * (indent**1.5)
+        
+        return f_lj + f_hertz
 
-    def solve_trajectory(self, z_total, v_total, k, R, A, E_s, gamma):
-        """
-        Includes Viscous Drag Force: 
-        Equilibrium: k*d = F_ts(Z + d) + F_drag(v_piezo)
-        """
+    def solve_trajectory(self, z_total, v_total, k, R, Ah, Bh, E_s, gamma, sigma):
         d_vals = []
         d_prev = 0.0
+        
         for Z_val, V_val in zip(z_total, v_total):
-            # F_drag = - gamma * V_val (approx v_piezo for simplicity)
-            f_drag = - gamma * V_val
+            d_cand = np.linspace(-10e-9, 40e-9, 1200)
+            h_cand = Z_val + d_cand
             
-            d_cand = np.linspace(-15e-9, 45e-9, 1000)
-            h_cand = Z_val + d_cand 
+            # Drag force acts on the cantilever: F_drag = -gamma * (V_support + V_deflection)
+            # Since V_deflection is small relative to piezo in HS-AFM, we approximate with V_support
+            f_drag = -gamma * V_val
             
-            f_ts = np.array([self.get_force(h, R, A, E_s) for h in h_cand])
-            # Residual including drag
-            res = k * d_cand - (f_ts + f_drag)
+            # Balance: k*d = F_ts(Z+d) + F_drag
+            forces = np.array([self.get_force(h, R, Ah, Bh, E_s, sigma) for h in h_cand])
+            res = k * d_cand - (forces + f_drag)
             
             crossings = np.where(np.diff(np.sign(res)))[0]
             if len(crossings) > 0:
@@ -185,15 +225,15 @@ class AFMPanelApp:
                 d_curr = d_cand[idx]
             else:
                 d_curr = d_cand[np.argmin(np.abs(res))]
+            
             d_vals.append(d_curr)
             d_prev = d_curr
         return np.array(d_vals)
 
     def save_to_csv(self):
-        if self.last_results is None:
-            return
-            
+        if self.last_results is None: return
         t, z_t, d_t, z_cycle, d_cycle, half, k, freq, mat_name = self.last_results
+        sig_current = float(self.sig_var.get()) * 1e-9
         
         # Prepare filename with timestamp
         timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -206,8 +246,8 @@ class AFMPanelApp:
                 writer.writerow(["Time (s)", "Support_Z (nm)", "Tip_Height_H (nm)", "Deflection (nm)"])
                 
                 # Convert to nm for easier reading
-                tip_h_nm = (z_t + d_t + self.sigma) * 1e9
-                support_z_nm = (z_t + self.sigma) * 1e9
+                tip_h_nm = (z_t + d_t + sig_current) * 1e9
+                support_z_nm = (z_t + sig_current) * 1e9
                 deflection_nm = d_t * 1e9
                 
                 for i in range(len(t)):
@@ -222,6 +262,19 @@ class AFMPanelApp:
             self.status_label.config(foreground="darkgreen")
         except Exception as e:
             self.status_var.set(f"Save Error: {e}")
+            self.status_label.config(foreground="red")
+
+    def save_plot_png(self):
+        mat_name = self.mat_choice.get().replace(" ", "_").replace("(", "").replace(")", "")
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"afm_plot_{mat_name}_{timestamp}.png"
+        try:
+            self.fig.savefig(filename, dpi=150, bbox_inches='tight')
+            self.status_var.set(f"Plot saved: {filename}")
+            self.status_label.config(foreground="darkgreen")
+        except Exception as e:
+            self.status_var.set(f"PNG Save Error: {e}")
+            self.status_label.config(foreground="red")
 
     def start_calculation(self):
         self.status_var.set("Calculating...")
@@ -244,10 +297,20 @@ class AFMPanelApp:
             z_mode = self.z_mode.get()
             
             E_s = float(self.e_var.get()) * 1e9
-            A = float(self.a_var.get()) * 1e-21
+            eps = float(self.eps_var.get()) * 1e-21
+            sig = float(self.sig_var.get()) * 1e-9
+            rt = float(self.rho_t_var.get())
+            rs = float(self.rho_s_var.get())
             
-            z_s = (z_s_nm - self.sigma*1e9) * 1e-9
-            z_e = (z_e_nm - self.sigma*1e9) * 1e-9
+            # Calculate A_h and B_h like Prof. Uchihashi
+            c6 = 4.0 * eps * sig**6
+            c12 = 4.0 * eps * sig**12
+            pref = np.pi**2 * rt * rs
+            Ah = pref * c6
+            Bh = pref * c12
+            
+            z_s = (z_s_nm - sig*1e9) * 1e-9
+            z_e = (z_e_nm - sig*1e9) * 1e-9
             
             total_duration = 1.0
             total_points = int(pts_per_cycle * freq * total_duration)
@@ -264,14 +327,14 @@ class AFMPanelApp:
             # Velocity for drag (v = dz/dt)
             v_z = np.gradient(z_t, dt)
             
-            d_t = self.solve_trajectory(z_t + self.sigma, v_z, k, R, A, E_s, gamma)
+            d_t = self.solve_trajectory(z_t + sig, v_z, k, R, Ah, Bh, E_s, gamma, sig)
             
             if noise_nm > 0:
                 d_t += np.random.normal(0, noise_nm * 1e-9, d_t.size)
 
             n_cycle = int(pts_per_cycle)
             half = n_cycle // 2
-            z_cycle = z_t[:n_cycle] + self.sigma
+            z_cycle = z_t[:n_cycle] + sig
             d_cycle = d_t[:n_cycle]
             
             self.last_results = (t, z_t, d_t, z_cycle, d_cycle, half, k, freq, self.mat_choice.get())
@@ -293,6 +356,7 @@ class AFMPanelApp:
     def update_ui(self, t, z_t, d_t, z_cycle, d_cycle, half, k, freq, mat_name):
         self.ax.clear()
         mode = self.view_mode.get()
+        sig_current = float(self.sig_var.get()) * 1e-9
         
         if mode == "ForceCurve":
             self.ax.plot(z_cycle[:half] * 1e9, d_cycle[:half] * 1e9, 'red', lw=1, label="Approach")
@@ -302,8 +366,8 @@ class AFMPanelApp:
             self.ax.set_ylabel("Deflection [nm]")
         
         else:
-            tip_h = (z_t + d_t + self.sigma) * 1e9
-            support_h = (z_t + self.sigma) * 1e9
+            tip_h = (z_t + d_t + sig_current) * 1e9
+            support_h = (z_t + sig_current) * 1e9
             deflection_nm = d_t * 1e9
             
             self.ax.plot(t, support_h, color='gray', linestyle=':', alpha=0.5, label="Support Z")
